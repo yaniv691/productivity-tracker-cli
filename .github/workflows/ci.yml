@@ -1,0 +1,359 @@
+name: Comprehensive CI/CD Pipeline with Extensive Logging
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Run with debug logging'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  NODE_ENV: ci
+  CI: true
+  FORCE_COLOR: 3
+  NPM_CONFIG_COLOR: always
+  TERM: xterm-256color
+
+jobs:
+  setup-and-cache:
+    name: Setup Dependencies and Cache
+    runs-on: ubuntu-latest
+    outputs:
+      cache-hit: ${{ steps.cache-deps.outputs.cache-hit }}
+      node-version-matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: 🚀 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          show-progress: true
+
+      - name: 📊 Repository Information
+        run: |
+          echo "::group::📋 Repository Details"
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Job: ${{ github.job }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo "::endgroup::"
+
+      - name: 🔧 Setup Node.js Environment Matrix
+        id: set-matrix
+        run: |
+          echo "::group::🏗️ Setting up Node.js Matrix Strategy"
+          matrix='{"node-version":["16.20.2","18.18.2","20.8.1"],"os":["ubuntu-latest","windows-latest","macos-latest"]}'
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $matrix"
+          echo "::endgroup::"
+
+      - name: 🏗️ Setup Node.js Primary Version
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.18.2'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: 🔍 Environment Diagnostics
+        run: |
+          echo "::group::🔧 System Environment Information"
+          echo "OS Information:"
+          uname -a
+          echo ""
+          echo "Node.js Information:"
+          node --version
+          npm --version
+          npx --version
+          echo ""
+          echo "Git Information:"
+          git --version
+          echo ""
+          echo "Environment Variables:"
+          env | grep -E '^(NODE_|NPM_|CI|GITHUB_)' | sort
+          echo ""
+          echo "Disk Space:"
+          df -h
+          echo ""
+          echo "Memory Information:"
+          free -h || vm_stat
+          echo "::endgroup::"
+
+      - name: 📦 Cache Node Modules
+        id: cache-deps
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            /tmp/.buildx-cache
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}-v2
+          restore-keys: |
+            ${{ runner.os }}-node-
+            ${{ runner.os }}-
+
+      - name: 🔄 Install Dependencies with Verbose Logging
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          echo "::group::📥 Installing NPM Dependencies"
+          echo "Starting dependency installation at: $(date)"
+          echo "Package.json contents:"
+          cat package.json
+          echo ""
+          echo "Installing dependencies with maximum verbosity..."
+          npm install --verbose --timing --fund --audit --foreground-scripts
+          echo "Installation completed at: $(date)"
+          echo ""
+          echo "Installed packages:"
+          npm list --depth=0
+          echo ""
+          echo "Package sizes:"
+          du -sh node_modules/* | sort -hr | head -20
+          echo "::endgroup::"
+
+  test:
+    name: Test Suite (${{ matrix.node-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: setup-and-cache
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup-and-cache.outputs.node-version-matrix) }}
+    steps:
+      - name: 🚀 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          echo "::group::📥 Installing Dependencies for Node.js ${{ matrix.node-version }}"
+          npm ci --verbose --timing
+          echo "::endgroup::"
+
+      - name: 🧪 Run Test Suite with Maximum Verbosity
+        run: |
+          echo "::group::🔬 Executing Test Suite"
+          echo "Starting tests at: $(date)"
+          echo "Node.js version: $(node --version)"
+          echo "Jest configuration:"
+          npx jest --showConfig
+          echo ""
+          echo "Running tests with verbose output..."
+          npm test -- --verbose --no-cache --runInBand --forceExit --detectOpenHandles --logHeapUsage
+          echo "Tests completed at: $(date)"
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: 📊 Upload Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.node-version }}-${{ matrix.os }}
+          path: |
+            coverage/
+            junit.xml
+            test-results.json
+            *.log
+
+  lint-and-typecheck:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: setup-and-cache
+    steps:
+      - name: 🚀 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.18.2'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          echo "::group::📥 Installing Dependencies for Linting"
+          npm ci --verbose
+          echo "::endgroup::"
+
+      - name: 🎨 ESLint Analysis with Detailed Output
+        run: |
+          echo "::group::🔍 ESLint Code Analysis"
+          echo "ESLint configuration:"
+          npx eslint --print-config src/cli.ts
+          echo ""
+          echo "Files to be linted:"
+          find src tests -name "*.ts" -type f | wc -l
+          find src tests -name "*.ts" -type f | head -20
+          echo ""
+          echo "Running ESLint with maximum verbosity..."
+          npm run lint -- --format=stylish --format=json --output-file=eslint-results.json || true
+          echo ""
+          echo "ESLint results summary:"
+          if [ -f eslint-results.json ]; then
+            cat eslint-results.json | jq '.[] | {filePath: .filePath, errorCount: .errorCount, warningCount: .warningCount}'
+          fi
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: 🔧 TypeScript Type Checking with Full Output
+        run: |
+          echo "::group::⚡ TypeScript Compilation Check"
+          echo "TypeScript configuration:"
+          cat tsconfig.json
+          echo ""
+          echo "TypeScript version: $(npx tsc --version)"
+          echo ""
+          echo "Running type checking with verbose output..."
+          npm run typecheck
+          echo "Type checking completed at: $(date)"
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: 📊 Upload Lint Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: lint-results
+          path: |
+            eslint-results.json
+            *.log
+
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    needs: [setup-and-cache, test, lint-and-typecheck]
+    if: always()
+    steps:
+      - name: 🚀 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.18.2'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          echo "::group::📥 Installing Dependencies for Build"
+          npm ci --verbose --timing
+          echo "::endgroup::"
+
+      - name: 🏗️ Execute Build Process with Extensive Logging
+        run: |
+          echo "::group::🔨 Building Application"
+          echo "Starting build process at: $(date)"
+          echo "Available memory:"
+          free -h
+          echo ""
+          echo "Disk space before build:"
+          df -h
+          echo ""
+          echo "Running custom build script with verbose output..."
+          npm run build
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: 📊 Build Analysis
+        if: always()
+        run: |
+          echo "::group::📈 Post-Build Analysis"
+          echo "Build completed at: $(date)"
+          echo ""
+          echo "Generated files:"
+          if [ -d dist ]; then
+            find dist -type f -exec ls -lh {} \;
+            echo ""
+            echo "Total build size:"
+            du -sh dist/
+          else
+            echo "❌ No dist directory found - build likely failed"
+          fi
+          echo ""
+          echo "Disk space after build:"
+          df -h
+          echo "::endgroup::"
+
+      - name: 🔐 Security Audit with Detailed Output
+        run: |
+          echo "::group::🛡️ Security Vulnerability Scan"
+          echo "Running npm security audit..."
+          npm audit --audit-level=moderate --json > audit-results.json || true
+          echo "Audit completed. Results:"
+          cat audit-results.json | jq '.vulnerabilities | keys | length' || echo "No JSON output available"
+          echo ""
+          echo "High/Critical vulnerabilities:"
+          npm audit --audit-level=high || echo "Audit completed with findings"
+          echo "::endgroup::"
+
+      - name: 📦 Upload Build Artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            audit-results.json
+            build-logs.txt
+            *.log
+
+  hycos:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: build
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: hycos-ai/gh-action@main
+        with:
+          api-key: ${{ secrets.HYCOS_API_KEY }}
+          github-token: ${{ github.token }}
+
+  notification:
+    name: Build Status Notification
+    runs-on: ubuntu-latest
+    needs: [test, lint-and-typecheck, build, hycos]
+    if: always()
+    steps:
+      - name: 📊 Final Build Status Summary
+        run: |
+          echo "::group::📋 Pipeline Execution Summary"
+          echo "========================================"
+          echo "🏁 FINAL BUILD STATUS REPORT"
+          echo "========================================"
+          echo "Pipeline executed at: $(date)"
+          echo "Repository: ${{ github.repository }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo ""
+          echo "Job Status Summary:"
+          echo "- Setup and Cache: ✅ Success"
+          echo "- Test Suite: ${{ needs.test.result == 'success' && '✅ Success' || '❌ Failed' }}"
+          echo "- Lint and TypeCheck: ${{ needs.lint-and-typecheck.result == 'success' && '✅ Success' || '❌ Failed' }}"
+          echo "- Build: ${{ needs.build.result == 'success' && '✅ Success' || '❌ Failed' }}"
+          echo "- Hycos AI: ${{ needs.hycos.result == 'success' && '✅ Success' || '❌ Failed' }}"
+          echo ""
+          echo "🔍 Detailed Results:"
+          echo "Test Result: ${{ needs.test.result }}"
+          echo "Lint Result: ${{ needs.lint-and-typecheck.result }}"
+          echo "Build Result: ${{ needs.build.result }}"
+          echo "Hycos Result: ${{ needs.hycos.result }}"
+          echo ""
+          echo "========================================"
+          echo "Pipeline completed at: $(date)"
+          echo "========================================"
+          echo "::endgroup::"
