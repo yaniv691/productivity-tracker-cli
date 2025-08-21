@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Version: dev-10154 (2025-08-21 14:12:18)#!/usr/bin/env node
 
 import { Command } from 'commander';
 import chalk from 'chalk';
