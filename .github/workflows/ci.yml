@@ -155,7 +155,6 @@ jobs:
           npm test -- --verbose --no-cache --runInBand --forceExit --detectOpenHandles --logHeapUsage
           echo "Tests completed at: $(date)"
           echo "::endgroup::"
-        continue-on-error: true
 
       - name: 📊 Upload Test Results
         uses: actions/upload-artifact@v3
@@ -206,7 +205,6 @@ jobs:
             cat eslint-results.json | jq '.[] | {filePath: .filePath, errorCount: .errorCount, warningCount: .warningCount}'
           fi
           echo "::endgroup::"
-        continue-on-error: true
 
       - name: 🔧 TypeScript Type Checking with Full Output
         run: |
@@ -220,7 +218,6 @@ jobs:
           npm run typecheck
           echo "Type checking completed at: $(date)"
           echo "::endgroup::"
-        continue-on-error: true
 
       - name: 📊 Upload Lint Results
         uses: actions/upload-artifact@v3
@@ -265,7 +262,6 @@ jobs:
           echo "Running custom build script with verbose output..."
           npm run build
           echo "::endgroup::"
-        continue-on-error: true
 
       - name: 📊 Build Analysis
         if: always()
